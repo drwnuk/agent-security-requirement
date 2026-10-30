@@ -1,0 +1,10 @@
+# LaTeX
+*.aux *.bbl *.blg *.log *.out *.fls *.fdb_latexmk *.synctex.gz *.toc
+paper/**/check/
+# data (never commit raw corpus or anything from the industrial sample except coded sheets)
+data/raw/
+data/industrial/*_INTERNAL*
+*.7z
+# misc
+.DS_Store
+__pycache__/

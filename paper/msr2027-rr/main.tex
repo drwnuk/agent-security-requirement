@@ -1,0 +1,199 @@
+%% MSR 2027 Registered Report -- Stage 1 (v0.2)
+%% Track: https://2027.msrconf.org/track/msr-2027-registered-reports
+%% Abstract: 13 Nov 2026 | Report: 20 Nov 2026 (AoE) | Max 6 pages + 1 page references
+%% Template: IEEE conference, 10pt (IEEEtran, no compsoc option). Overleaf: Menu > Compiler = pdfLaTeX.
+%% Items marked \todo{...} must be filled before submission.
+
+\documentclass[10pt,conference]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\begin{document}
+
+\title{Security Requirements for Coding Agents:\\What Developers Write in Agent Instruction Files, How Good It Is, and Whether It Matters}
+
+\author{%
+\IEEEauthorblockN{Krzysztof Wnuk}
+\IEEEauthorblockA{Blekinge Institute of Technology\\Karlskrona, Sweden\\krzysztof.wnuk@bth.se}
+\and
+\IEEEauthorblockN{\todo{Co-author 2}}
+\IEEEauthorblockA{Blekinge Institute of Technology\\Karlskrona, Sweden\\\todo{email}}
+\and
+\IEEEauthorblockN{\todo{Co-author 3}}
+\IEEEauthorblockA{\todo{Affiliation}\\\todo{email}}
+}
+
+\maketitle
+
+\begin{abstract}
+\textbf{Background.} Agent instruction files (\texttt{AGENTS.md}, \texttt{CLAUDE.md}, \texttt{.cursorrules}, \texttt{copilot-instructions.md}, \texttt{SKILL.md}) have become the de-facto requirements documents that developers write \emph{for} AI coding agents. Four recent mining studies characterise their general content and consistently report that security is rare---8.7\% to 14.8\% of files---but none analyses the security content itself, even though controlled studies show that security instructions placed in prompts or agent memory change the vulnerability rate of generated code by 20--34 percentage points.
+\textbf{Objective.} We study security requirements written for coding agents as requirements artefacts: what they ask for (RQ1), how well they are written by requirements-engineering criteria (RQ2), what practitioners consider a good security requirement for an agent (RQ3), and---confirmatorily---whether their presence and quality are associated with observable repository security signals (RQ4).
+\textbf{Method.} Starting from an existing 32,564-repository corpus with 2,926 agent-configured repositories, refreshed to November 2026, we extract security-bearing instruction files with a standards-derived keyword filter, code individual requirement units with an LLM-assisted, human-validated protocol, score them with a quality rubric grounded in ISO/IEC/IEEE~29148 and requirements smells, define quality through a practitioner survey and expert rating, and test three pre-registered hypotheses with regression and survival models against CodeQL, secret-leak and advisory outcomes. We release the requirement-level dataset.
+\end{abstract}
+
+\begin{IEEEkeywords}
+agentic coding, requirements engineering, security requirements, mining software repositories, AGENTS.md, registered report
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+AI coding agents such as Claude Code, GitHub Copilot's coding agent, Codex and Cursor now implement features, fix issues and open pull requests with limited human intervention. Because the agent is re-instantiated for every task, developers give it persistent, project-level instructions in versioned files: \texttt{AGENTS.md}, \texttt{CLAUDE.md}, \texttt{GEMINI.md}, \texttt{.cursorrules}, \texttt{.github/copilot-instructions.md}, Claude \emph{skills} (\texttt{SKILL.md}) and \emph{subagent} definitions. A February-2026 snapshot found such files in 2,926 of 32,564 engineered open-source repositories, with context files alone present in 2,634 of them~\cite{galster2026configuring}. These files are, functionally, requirements specifications whose reader is a machine: they state what the agent must build, must not do, and how it should verify its work.
+
+Whether the resulting code is secure is a separate and increasingly documented problem. Benchmarks of agentic secure coding report that the best agent--model pair produces code that is both correct and secure in only 23.8\% of repository-level C/C++ tasks~\cite{chen2026securevibebench}, and that frontier agents pass functional tests on 73--91\% of tasks but are functional \emph{and} secure on only 16--25\%~\cite{wu2026lastsecure}. The instruction itself matters: inserting security requirements into the prompt or the agent's long-term memory reduced vulnerability rates by 19.7--33.6 percentage points, at a cost of up to 15.9 points of functional correctness~\cite{chen2026memory}; a hardened security prompt still left up to 34\% of functionally valid generations insecure, and in 72\% of those cases the model had identified the flaw in its reasoning yet shipped it~\cite{han2026secreason}. Content, not surface form, is what makes natural-language context help a model~\cite{pan2026comments}, and the same intent expressed as a structured instruction rather than a comment changes pass rates by up to 10 points~\cite{sun2026ifim}. The \emph{form and content of the security requirement} is therefore a first-order variable---yet it has only been varied in the laboratory. No study has asked what security requirements developers actually write for agents, whether they are good requirements, where they come from, or whether they relate to anything observable in the repository.
+
+This registered report proposes to answer those questions by transferring the ``What makes a good X?'' methodology that Lu et al.\ applied to Hugging Face model cards~\cite{lu2026modelcard}---platform-scale sampling, closed and thematic coding with reported agreement, a practitioner survey and expert rating to define quality, feature analysis with effect sizes, and survival analysis against an outcome---to security requirements written for coding agents, and by adding the requirements-engineering (RE) lens of requirement quality criteria~\cite{iso29148} and requirements smells~\cite{femmer2017smells}. The study is MSR-native, needs no GPU, and pre-registers its outcome hypotheses so that the obvious confound---security-conscious teams both write requirements and keep cleaner repositories---is handled by design rather than post hoc.
+
+\section{Background and Related Work}
+
+\textbf{Agent instruction files.} Chatlatanagulchai et al.\ analysed 253 \texttt{CLAUDE.md} files and found security content in 8.7\%~\cite{chatlatanagulchai2025manifests}; their follow-up on 2,303 context files from 1,925 repositories found security in 14.8\% and performance in 14.5\%, concluding that these files ``offer few safeguards for agent-written code'' and that they evolve through frequent small additions, like configuration code~\cite{chatlatanagulchai2026readmes}. Galster et al.\ mapped eight configuration mechanisms (context files, rules, skills, subagents, hooks, MCP servers) across 32,564 repositories without examining security content~\cite{galster2026configuring}. Treude and Baltes showed that 23\% of repositories carry stale code references in these files (``context rot'')~\cite{treude2026contextrot}, and Lulla et al.\ measured a 29\% median runtime reduction from \texttt{AGENTS.md} while explicitly excluding output security~\cite{lulla2026efficiency}. A survey of agent skills reports that 26.1\% of community-contributed skills contain vulnerabilities, treating the files as an attack surface rather than as requirement carriers~\cite{xu2026skills}. None of these works codes, grades or relates the security instructions themselves.
+
+\textbf{Security of agent-generated code.} Beyond the benchmarks cited above~\cite{chen2026securevibebench,wu2026lastsecure}, model-level hardening by parameter editing raises security ratios by 15--25\% on seen CWEs but generalises poorly to unseen ones~\cite{sun2026safeedit}, and in-stream monitoring of reasoning traces can repair most insecure drafts before delivery~\cite{han2026secreason}. These studies vary the model or the decoding; the requirement is held fixed or absent.
+
+\textbf{Requirements quality.} ISO/IEC/IEEE~29148 characterises good requirements as unambiguous, verifiable, singular and traceable~\cite{iso29148}; requirements smells operationalise violations (vague terms, subjective language, non-verifiable terms, negative phrasing)~\cite{femmer2017smells}. Recent work on LLMs for RE evaluates classification, specification and traceability tasks~\cite{dabrowski2026llm4re} and shows that misread requirements are a root cause of incorrect generated code~\cite{li2026reacoder}, but has not examined requirements whose intended reader is an autonomous agent.
+
+\textbf{Registered-report precedents.} Our design follows accepted MSR registered reports that identify a construct in repository text by a documented keyword filter with manual validation~\cite{hennig2023privacy}, pre-register null hypotheses tested with non-parametric statistics and effect sizes~\cite{recupito2024smells}, and use Kaplan--Meier survival analysis of repository artefacts~\cite{koohjani2025ptm}.
+
+\section{Research Questions and Hypotheses}
+
+The study is \emph{mixed}: RQ1--RQ3 are exploratory; RQ4 is confirmatory with three pre-registered hypotheses.
+
+\subsection{Exploratory research questions}
+
+\textbf{RQ1 (What).} Which security requirements do developers write for coding agents, and how are they distributed across tools, ecosystems and project types? \emph{Rationale:} prior taxonomies collapse security into one of 15--16 content types~\cite{chatlatanagulchai2025manifests,chatlatanagulchai2026readmes}; a two-level taxonomy mapped to OWASP ASVS, CWE, the OWASP Top-10 for LLM applications and NIST SSDF is needed before quality or effect can be studied. We expect, and will test for, a split between \emph{product-security} requirements (what the code must do, e.g.\ parameterised queries) and \emph{agent-conduct} requirements (what the agent may do, e.g.\ never read \texttt{.env}, never run destructive git commands), a distinction absent from prior work.
+
+\textbf{RQ2 (How).} How are these requirements written---specificity, verifiability, modality, rationale, scope, position in the file, provenance---and which RE quality criteria and requirements smells do they satisfy or violate? \emph{Rationale:} RE research has three decades of evidence that unverifiable, vague or non-atomic requirements are not implemented as intended by humans~\cite{femmer2017smells}; whether the same holds for machine readers is unknown.
+
+\textbf{RQ3 (Quality definition).} What do practitioners consider a good security requirement for a coding agent, and which of their criteria coincide with RE criteria? \emph{Rationale:} Lu et al.\ derived an operational quality definition from a survey plus expert rating rather than from the authors' intuition~\cite{lu2026modelcard}; we follow the same path.
+
+\subsection{Confirmatory hypotheses (RQ4)}
+
+\textbf{RQ4 (Outcomes).} Are the presence and quality of security requirements in agent instruction files associated with observable repository security signals, after controlling for repository characteristics and security maturity?
+
+\begin{itemize}
+\item \textbf{H1 (presence).} Repositories whose agent instruction files contain at least one security requirement have a lower density of high/critical CodeQL alerts on the default branch than repositories whose files contain none, controlling for confounders. \emph{Null:} no difference.
+\item \textbf{H2 (quality).} Among repositories with security requirements, higher requirement quality (RQ2 rubric score) is associated with a lower hazard of a \emph{security event} after the instruction file was introduced. \emph{Null:} hazard ratio $=1$.
+\item \textbf{H3 (agent-authored changes).} Pull requests authored or co-authored by coding agents introduce fewer new high/critical CodeQL alerts per changed line in repositories with high-quality security requirements than in repositories without security requirements. \emph{Null:} no difference.
+\end{itemize}
+
+The direction of H1--H3 follows the laboratory evidence that security instructions reduce insecure generation~\cite{chen2026memory,han2026secreason}; the alternative---that instructions are ignored, or that the association is explained entirely by team maturity---is equally informative and will be reported as such. Negative results are a legitimate outcome of this study.
+
+\section{Variables (Confirmatory Part)}
+
+Table~\ref{tab:vars} lists the variables for H1--H3. All repository-level measures are taken at a single frozen snapshot date $t_0$ (planned: 30~Nov~2026); histories are reconstructed from Git. The composite \emph{security event} (first high-severity CodeQL alert introduced, first secret committed, first published advisory) is used because any single event type is sparse; each type will additionally be analysed separately so that the composite cannot hide divergent effects.
+
+\begin{table*}[t]
+\caption{Variables for the confirmatory analysis (RQ4). N=nominal, O=ordinal, R=ratio.}
+\label{tab:vars}
+\centering\small
+\begin{tabular}{p{1.9cm}p{1.2cm}p{5.6cm}p{0.6cm}p{6.4cm}}
+\toprule
+Variable & Abbr. & Description & Scale & Operationalisation \\
+\midrule
+\multicolumn{5}{l}{\emph{Independent}}\\
+Security requirement present & SRP & Instruction files of the repository contain $\geq1$ security requirement unit & N & Output of the security-bearing filter (Table~\ref{tab:keywords}) validated by annotation; binary \\
+Security requirement quality & SRQ & Mean rubric score of the repository's security requirement units & O/R & RQ2 rubric (specificity, verifiability, modality, rationale, scope, atomicity, smells), 0--12, human-scored or LLM-judged with reported calibration \\
+High-quality set & HQ & Repository meets the RQ3 operational definition & N & Derived from survey+expert rating (pre-specified default: $\geq1$ product-security and $\geq1$ agent-conduct unit, each with specificity$\geq1$ and verifiability$\geq1$) \\
+\midrule
+\multicolumn{5}{l}{\emph{Dependent}}\\
+CodeQL alert density & CQD & High/critical CodeQL alerts per kLOC on the default branch at $t_0$ & R & CodeQL CLI, default security query suites per language, severity $\geq$ high \\
+Time to security event & TSE & Days from instruction-file introduction to first security event; censored at $t_0$ & R & Earliest of: commit introducing a high-severity CodeQL alert (bisected), first secret commit (gitleaks), first GHSA/OSV advisory \\
+New alerts per agent PR & NAP & New high/critical CodeQL alerts introduced per 100 changed lines in agent-authored PRs & R & PR-level CodeQL diff; agent authorship by bot login, \texttt{Co-authored-by} trailer, or vendor PR signature, validated on 100 PRs \\
+\midrule
+\multicolumn{5}{l}{\emph{Confounding / control}}\\
+Size, age, activity & LOC, AGE, CPM & Lines of code; days since first commit; commits per month & R & \texttt{tokei}; Git log \\
+Popularity & STARS, CONTRIB & Stars; distinct committers & R & GitHub API \\
+Language & LANG & Primary language & N & GitHub linguist; stratification variable \\
+Security maturity & SMI & Index of pre-existing security practice & O & Sum of: \texttt{SECURITY.md} present; Dependabot/Renovate config; SAST workflow in CI; OpenSSF Scorecard Branch-Protection and Token-Permissions passes---all measured \emph{before} the instruction file was introduced \\
+Instruction-file age & IFA & Days since instruction file introduced & R & Git history \\
+Template provenance & TPL & Security units copied near-verbatim from a public template or vendor doc & N & $n$-gram overlap $\geq0.8$ against a crawled template corpus \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\emph{Confounder control.} SMI is the central confound: teams that already run SAST and protect branches are likely both to write security requirements and to have fewer alerts. We (i) include SMI, LOC, AGE, CPM, STARS, CONTRIB, LANG and IFA as covariates in every model; (ii) measure SMI strictly before the instruction file appeared so that it cannot be a consequence of the requirement; (iii) run a within-repository pre/post comparison for repositories that added security content to an \emph{existing} instruction file, which removes time-invariant team characteristics; and (iv) report results with and without template-copied units (TPL).
+
+\section{Datasets and Subjects}
+\label{sec:data}
+
+\subsection{Repository corpus}
+We start from the publicly released corpus of Galster et al.~\cite{galster2026configuring}: 37,249 non-fork GitHub repositories with $\geq2$ contributors and a licence, filtered to 32,564 engineered projects, of which 2,926 use at least one agentic configuration mechanism (snapshot February 2026; scripts and data on Zenodo). Reusing it makes our prevalence figures directly comparable with theirs. Because adoption is growing quickly, we refresh the corpus in November 2026 with the same selection criteria and file detectors, extended with \texttt{GEMINI.md}, \texttt{.windsurfrules}, \texttt{.clinerules}, \texttt{.cursor/rules/*.mdc}, \texttt{.claude/skills/*/SKILL.md} and \texttt{.claude/agents/*.md}. We expect 5,000--8,000 agent-configured repositories after refresh. For every file we extract the full version history.
+
+\subsection{Security-bearing subset and requirement units}
+A file is \emph{security-bearing} if it matches at least one term of the keyword set in Table~\ref{tab:keywords}, or if a sentence embedding (\texttt{all-MiniLM-L6-v2}) lies within cosine distance 0.35 of the centroid of the ASVS chapter descriptions. Each term is traced to a source standard; terms with high expected false-positive rates in a software context (``safe'', ``protect'', ``trust'', ``validate'' alone) are excluded, following~\cite{hennig2023privacy}, and we report per-term precision on a 100-file sample of flagged files. Prior work implies 9--15\% of files are security-bearing~\cite{chatlatanagulchai2025manifests,chatlatanagulchai2026readmes}; we therefore expect 600--1,200 such files from the refreshed corpus. \emph{Positive control:} applied to the repository list of~\cite{chatlatanagulchai2026readmes}, the filter's prevalence must lie within $\pm3$ points of their 14.8\%. \emph{Recall check:} two annotators read 200 random non-flagged files and we report filter recall. The \emph{unit of analysis} for RQ1--RQ2 is the requirement unit: one sentence or bullet item expressing one obligation, prohibition or permission addressed to the agent, nested in file and repository. We expect 3--8 units per security-bearing file.
+
+\begin{table}[t]
+\caption{Keyword set for the security-bearing filter (case-insensitive, stemmed). FP = expected false-positive risk.}
+\label{tab:keywords}
+\centering\small
+\begin{tabular}{p{3.6cm}p{2.6cm}p{0.9cm}}
+\toprule
+Terms & Source & FP \\
+\midrule
+secret, credential, api key, token, password, \texttt{.env} & ASVS V2/V6; agent-conduct seed & low \\
+inject(ion), sanitis/ze, escape, parameteri(s/z)ed, xss, csrf, ssrf & ASVS V5; CWE-79/89/352/918 & low \\
+auth(entication/orization), session, rbac, permission & ASVS V3/V4 & med \\
+encrypt, tls, https, hash, crypto & ASVS V6/V9 & med \\
+cve, vulnerab, advisory, dependabot, audit, sbom & SSDF PW.4, RV & low \\
+owasp, cwe, asvs, nist, gdpr, pii & standards named explicitly & low \\
+never commit, do not commit, never read, do not run, destructive, \texttt{rm -rf}, force push, \texttt{--no-verify} & OWASP LLM Top-10 (excessive agency); agent-conduct seed & low \\
+prompt injection, untrusted (input/content), sandbox & OWASP LLM Top-10 & low \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Pilot}
+\todo{Replace with numbers from running the Table~\ref{tab:keywords} filter on the 2,926 Galster repositories.} On the February-2026 corpus the filter flags \todo{N} of 2,926 repositories (\todo{x}\%) and \todo{M} files; manual inspection of 100 flagged files gives precision \todo{p}; the 100-unit pilot codebook yields \todo{k} leaf categories, of which \todo{a} are product-security and \todo{b} agent-conduct. A trial of the CodeQL pipeline on 50 repositories took \todo{t} CPU-minutes per repository and covered \todo{c}\% of them with a supported language.
+
+\subsection{Annotation samples}
+If the number of security-bearing files is $\leq1,000$ we annotate all; otherwise a stratified random sample of 800 files (95\% confidence, $\pm3.5\%$ margin, stratified by tool and primary language), matching the sampling rationale of~\cite{lu2026modelcard}. Human annotation covers: 100 units for the RQ1 pilot codebook; 300 units for validating LLM-assisted taxonomy labels; 400 units for the RQ2 rubric; 100 flagged files for filter precision; 200 non-flagged files for filter recall; 100 PRs for agent-authorship detection.
+
+\subsection{Survey and expert participants}
+Survey: maintainers of repositories in the security-bearing subset who have a public contact or who have opened issues about agent configuration, contacted once in accordance with GitHub's acceptable-use terms, plus a snowball sample through the authors' industrial networks. Target $n\geq60$, following~\cite{lu2026modelcard}. Experts: 8--10 practitioners and researchers with $\geq3$ years in application security or RE. Ethical review will be obtained from the first author's institution before any contact (application planned for November 2026); responses are anonymous and no repository is identified in the publication.
+
+\subsection{Outcome data}
+Observable without repository administrator rights: CodeQL alerts (we run the CodeQL CLI on the default branch for JavaScript/TypeScript, Python, Java, Go and C/C++, which together cover the large majority of agent-configured repositories~\cite{galster2026configuring}), OpenSSF Scorecard (public API or local run), secrets in history (\texttt{gitleaks}), published advisories (GitHub Security Advisories and OSV), and agent-authored pull requests. Dependabot \emph{alerts} require administrator scope and are replaced by Scorecard's \emph{Vulnerabilities} check and OSV lookups on lockfiles; this is a stated limitation.
+
+\section{Execution Plan}
+
+\subsection{Setting and tools}
+All mining runs on a 16-core server without GPU: GitHub REST/GraphQL with a research token, \texttt{git}, \texttt{tokei}, CodeQL CLI, \texttt{gitleaks}, OpenSSF Scorecard, OSV API, Python (\texttt{pandas}, \texttt{statsmodels}, \texttt{lifelines}, \texttt{scikit-learn}), and an LLM API for pre-labelling and judging (budget $\approx$10k calls). All tools are existing; the new artefacts are the taxonomy, rubric, filter and dataset, released on Zenodo with the crawler so that the snapshot can be reproduced or refreshed. CodeQL over $\sim$5,000 repositories is estimated at one CPU-week (\todo{confirm from the 50-repository trial}).
+
+\subsection{RQ1 -- taxonomy}
+(1) Two annotators open-code 100 security units and build a two-level codebook; a third annotator adjudicates disagreements. (2) An LLM pre-labels all units with the codebook; a stratified 300-unit sample is independently labelled by two humans and we report Cohen's $\kappa$ against the LLM labels, with a pre-specified acceptance threshold $\kappa\geq0.75$; if not met, the codebook is revised and the step repeated, at most twice, after which human labelling continues in 5\% increments until the threshold is reached~\cite{hennig2023privacy}. (3) Each leaf category is mapped by two annotators to ASVS~v5, CWE Top-25, OWASP LLM Top-10 and NIST SSDF practices; disagreements are resolved by discussion. (4) We report prevalence per category, tool, language and project type with 95\% Wilson intervals, and test the product-security vs.\ agent-conduct split against tool type with a $\chi^2$ test of independence.
+
+\subsection{RQ2 -- quality rubric}
+Rubric dimensions, each scored 0/1/2 and derived from ISO/IEC/IEEE~29148 characteristics and the requirements-smell catalogue~\cite{femmer2017smells}: \emph{specificity} (generic / category / standard-level with a concrete mechanism), \emph{verifiability} (none / human-checkable / machine-checkable or referencing a tool, test or CI gate), \emph{modality} (descriptive / should / must-never), \emph{rationale} present, \emph{scope precision} (global / path-scoped), \emph{atomicity}; plus a smell count (vague terms, subjective language, negative framing without alternative, dangling reference to a non-existent file or tool---linking to context rot~\cite{treude2026contextrot}) and \emph{provenance} (project-specific / standard / template or vendor doc). Two annotators score 400 units; we report weighted $\kappa$ per dimension and ICC for the total. An LLM judge is calibrated on these 400 units and applied to the remainder only if its agreement with humans reaches $\kappa\geq0.70$ on every dimension retained; dimensions below threshold are reported from human scores only. A second judge model is used as a sensitivity check.
+
+\subsection{RQ3 -- survey and expert rating}
+The questionnaire (piloted with five developers) asks which security instructions respondents wrote and why; what they expect the agent to do with them; whether they observed compliance or violations; what makes an instruction effective; and what tooling they want. Three open-ended questions are coded thematically by two authors with negotiated agreement and reported Cohen's $\kappa$ on a 20\% overlap. Experts rate category importance on a 1--5 scale; we retain categories with mean rating $\geq4$ and ICC $p<0.01$, as in~\cite{lu2026modelcard}. The operational definition of a \emph{high-quality security requirement set} (HQ) is fixed from these results \emph{before} any RQ4 analysis is run; the default in Table~\ref{tab:vars} applies only if the survey yields no usable consensus, and we will state which was used. RQ4 does not depend on survey completion.
+
+\subsection{RQ4 -- confirmatory analysis}
+\emph{H1.} Negative-binomial regression of the CodeQL high/critical alert count with $\log(\mathrm{LOC})$ offset, predictors SRP and all controls; we report the incidence-rate ratio for SRP with 95\% CI; H1 is supported if IRR$<1$ with $p<0.05$ after Holm correction across H1--H3. \emph{H2.} Kaplan--Meier curves and a Cox proportional-hazards model of TSE on SRQ (and HQ) with the same controls, stratified by LANG; proportional hazards checked with Schoenfeld residuals, falling back to a stratified or AFT model if violated; supported if HR$<1$ for SRQ with $p<0.05$. \emph{H3.} Mixed-effects negative-binomial model of new alerts per agent PR with repository random intercept, predictors HQ and controls; supported if IRR$<1$. \emph{Within-repository check:} for repositories that added security content to an existing file, paired comparison of alert density 90 days before vs.\ after (Wilcoxon signed-rank, Cliff's~$\delta$). \emph{Outcome-neutral checks:} (a) CodeQL must flag at least 80\% of a 50-repository set with a published GHSA whose fixing commit is after $t_0$ (positive control for the oracle); (b) SMI must correlate negatively with CQD regardless of SRP (sanity check that the outcome is sensitive to security practice at all); (c) template-copied units are analysed separately.
+
+\emph{Power.} With an expected 15\% of agent-configured repositories security-bearing, a refreshed corpus of 3,000--4,000 CodeQL-analysable repositories gives $n_1\approx450$--600 vs.\ $n_2\approx2,550$--3,400 and a minimum detectable standardised difference of $d\approx0.12$--0.14 at 80\% power, $\alpha=0.05$ (two-sided), i.e.\ small effects are detectable for H1. For H2, Schoenfeld's formula with 15\% exposed requires 374 events to detect HR$=1.5$ and 128 events for HR$=2.0$ at 80\% power; given that 23\% of repositories already show stale references~\cite{treude2026contextrot} and secret leaks are common, we expect over 400 events across the three event types, and will report achieved power if fewer occur. If the refreshed corpus is smaller than 3,000 analysable repositories we will state the achieved MDE and interpret H1--H3 accordingly rather than lowering the threshold.
+
+\subsection{Extension (if time permits): automatic quality detection}
+Replicating the classifier design of~\cite{lu2026modelcard}, file-level features (word count, number of security units, mean specificity and verifiability, counts of code blocks/links/tool references, update interval, tool type, provenance share) would be used to predict HQ with logistic regression, random forest, XGBoost and a fine-tuned CodeBERT under stratified 10-fold CV, reporting ROC-/PR-AUC, Wilcoxon tests and Cliff's~$\delta$ between classifiers, and feature importance. This extension is not required for the hypotheses above and will be reported as exploratory if executed.
+
+\subsection{Reporting}
+All RQs are reported with effect sizes and confidence intervals. Deviations from this protocol will be listed in a dedicated section of the Stage-2 paper. The dataset (units, labels, rubric scores, repository outcomes, survey instrument and anonymised responses) and scripts will be archived on Zenodo under CC-BY/MIT licences.
+
+\section{Timeline and Feasibility}
+Nov 2026: corpus refresh, filter, ethics application. Dec 2026--Jan 2027: RQ1 codebook and labelling; RQ2 rubric scoring and judge calibration; survey launch. Feb--Mar 2027: outcome extraction (CodeQL, Scorecard, gitleaks, advisories, agent PRs) and RQ3 synthesis. Apr--May 2027: RQ4 models. Jun--Aug 2027: writing, replication package. 30 Sep 2027: Stage-2 submission to EMSE. Annotation effort is $\approx$60--80 hours per annotator; the only non-trivial cost is one CPU-week of CodeQL and $\approx$USD~300 of LLM API usage.
+
+\section{Threats to Validity}
+\emph{Construct.} CodeQL and Scorecard are proxies for security, not ground truth; we use validated query suites, a positive control and complementary event types reported separately. The quality rubric encodes RE criteria that may not transfer to machine readers---this is what RQ3 and RQ4 test. \emph{Internal.} The maturity confound is addressed by pre-file SMI, within-repository comparison and pre-registration; residual confounding cannot be excluded and we claim association, not causation. LLM-judge circularity is bounded by human calibration with reported agreement and a second judge. \emph{External.} Open-source repositories only; proprietary instruction files may differ. File conventions evolve monthly; we freeze and publish the snapshot. \emph{Conclusion.} Multiple testing is Holm-corrected within the confirmatory family; exploratory results are labelled as such.
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}
